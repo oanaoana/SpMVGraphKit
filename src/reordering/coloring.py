@@ -144,3 +144,116 @@ def parallel_coloring_reordering(matrix, num_colors_target=None):
     }
 
     return reordered_matrix, color_groups, coloring_info
+
+
+def reverse_cuthill_mckee_reordering(matrix):
+    """Reverse Cuthill-McKee reordering."""
+    from scipy.sparse.csgraph import reverse_cuthill_mckee
+
+    # Convert to symmetric if needed
+    if matrix.shape[0] == matrix.shape[1]:
+        # Make symmetric for RCM
+        sym_matrix = matrix + matrix.T
+        perm = reverse_cuthill_mckee(sym_matrix)
+        return matrix[perm, :][:, perm], perm
+    else:
+        # For non-square matrices, just use row permutation
+        graph = matrix @ matrix.T
+        perm = reverse_cuthill_mckee(graph)
+        return matrix[perm, :], perm
+
+def king_ordering(matrix):
+    """King ordering (bandwidth reduction)."""
+    rows, cols = matrix.shape
+
+    # Simple King-like ordering: minimize bandwidth
+    degrees = np.array(matrix.sum(axis=1)).flatten()
+
+    # Start with minimum degree node
+    start = np.argmin(degrees)
+    visited = set()
+    ordering = []
+    queue = [start]
+
+    while queue and len(ordering) < rows:
+        current = queue.pop(0)
+        if current in visited:
+            continue
+
+        visited.add(current)
+        ordering.append(current)
+
+        # Find neighbors and add to queue
+        if len(ordering) < rows:
+            remaining = [i for i in range(rows) if i not in visited]
+            if remaining:
+                remaining_degrees = [(degrees[i], i) for i in remaining]
+                remaining_degrees.sort()
+                queue.extend([i for _, i in remaining_degrees[:3]])
+
+    # Fill any remaining nodes
+    for i in range(rows):
+        if i not in ordering:
+            ordering.append(i)
+
+    return matrix[ordering, :], ordering
+
+def diagonal_reordering(matrix):
+    """Reorder to move diagonal elements first."""
+    rows, cols = matrix.shape
+    coo = matrix.tocoo()
+
+    # Find rows with diagonal elements
+    has_diagonal = set()
+    for i, j in zip(coo.row, coo.col):
+        if i == j and i < min(rows, cols):
+            has_diagonal.add(i)
+
+    # Create ordering: diagonal rows first, then others
+    diagonal_rows = sorted(has_diagonal)
+    other_rows = [i for i in range(rows) if i not in has_diagonal]
+
+    new_order = diagonal_rows + other_rows
+    return matrix[new_order, :], new_order
+
+# Update the multi_strategy_coloring function to include these
+def multi_strategy_coloring(matrix, strategies=['largest_first', 'rcm', 'king', 'diagonal']):
+    """Multi-strategy coloring including new methods."""
+    results = {}
+
+    for strategy in strategies:
+        try:
+            if strategy == 'rcm':
+                reordered_matrix, new_order = reverse_cuthill_mckee_reordering(matrix)
+                results[strategy] = {
+                    'matrix': reordered_matrix,
+                    'order': new_order,
+                    'method': 'reverse_cuthill_mckee'
+                }
+            elif strategy == 'king':
+                reordered_matrix, new_order = king_ordering(matrix)
+                results[strategy] = {
+                    'matrix': reordered_matrix,
+                    'order': new_order,
+                    'method': 'king_ordering'
+                }
+            elif strategy == 'diagonal':
+                reordered_matrix, new_order = diagonal_reordering(matrix)
+                results[strategy] = {
+                    'matrix': reordered_matrix,
+                    'order': new_order,
+                    'method': 'diagonal_first'
+                }
+            else:
+                # Original coloring methods
+                reordered_matrix, coloring, new_order = color_based_row_reordering(matrix, strategy)
+                results[strategy] = {
+                    'matrix': reordered_matrix,
+                    'coloring': coloring,
+                    'order': new_order,
+                    'num_colors': len(set(coloring.values()))
+                }
+        except Exception as e:
+            results[strategy] = {'error': str(e)}
+
+    return results
